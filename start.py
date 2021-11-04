@@ -47,7 +47,7 @@ while(cap.isOpened()):
             # Page segmentation mode (PSM) 13 means "Raw line. Treat the image
             # as a single text line, bypassing hacks that are
             # Tesseract-specific."
-            text = pytesseract.image_to_string(img, lang='chi_sim', config='--psm 13 -c tessedit_char_blacklist=-+，。”')
+            text = pytesseract.image_to_string(img, lang='chi_sim', config='--psm 13')
             print(prev_hash - hash)
             text = text.replace("-", "一")
             text = text.replace("+", "十")
@@ -76,39 +76,3 @@ cap.release()
 
 # Closes all the frames
 cv2.destroyAllWindows()
-
-'''
-onlytext1 = load_text_image('test1.png')
-hash1 = imagehash.average_hash(onlytext1, 32)
-print(hash1)
-
-onlytext2 = load_text_image('test2.png')
-onlytext2.show()
-hash2 = imagehash.average_hash(onlytext2, 32)
-print(hash2)
-
-t0 = time.time()
-onlytext3 = load_text_image('test3.png')
-hash3 = imagehash.average_hash(onlytext3, 32)
-t1 = time.time()
-total = t1-t0
-print(total)
-print(hash3)
-
-onlytext4 = load_text_image('test4.png')
-onlytext4.show()
-hash4 = imagehash.average_hash(onlytext4, 32)
-print(hash4)
-
-t0 = time.time()
-text = pytesseract.image_to_string(onlytext2, lang='chi_sim')
-t1 = time.time()
-total = t1-t0
-print(total)
-print(text)
-
-print(hash1 - hash2)
-print(hash2 - hash3)
-print(hash1 - hash4)
-
-'''
