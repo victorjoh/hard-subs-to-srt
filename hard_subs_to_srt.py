@@ -3,23 +3,42 @@ import pytesseract
 import imagehash
 import cv2
 import numpy
+import sys
 #from imutils.video import FPS
 from imutils.video import FileVideoStream
+import os
 
 NO_SUBTILE_FRAME_HASH = imagehash.hex_to_hash('0' * 256)
 
-def extract_srt(video_file):
+
+def extract_srt(video_file, srt_file):
     video = FileVideoStream(video_file)
-    video.stream.set(cv2.CAP_PROP_POS_FRAMES, 5000)
+    video.stream.set(cv2.CAP_PROP_POS_FRAMES, 2500)
 
     if video.stream.isOpened() == False:
-        print("Error opening video stream or file")
+        print('Error opening video stream or file')
         return
 
+    sys.stdout = FileAndTerminalStream(srt_file)
     convert_frames_to_srt(video)
+    sys.stdout = sys.stdout.terminal
 
     cv2.destroyAllWindows()
     video.stop()
+
+
+class FileAndTerminalStream(object):
+    def __init__(self, file):
+        self.terminal = sys.stdout
+        self.srt = open(file, 'w', encoding='utf-8')
+
+    def write(self, message):
+        self.terminal.write(message)
+        self.srt.write(message)
+
+    def flush(self):
+        # this flush method is needed for python 3 compatibility.
+        pass
 
 
 def convert_frames_to_srt(video):
@@ -62,16 +81,16 @@ def convert_frames_to_srt(video):
                 line = clean_up_tesseract_output(line)
 
             if prev_line != line:
-                if prev_line != "":
+                if prev_line != '':
                     line_start_time = millis_to_srt_timestamp(
                         prev_change_millis)
                     line_end_time = millis_to_srt_timestamp(
                         video.stream.get(cv2.CAP_PROP_POS_MSEC))
-                    #fps.stop()
+                    # fps.stop()
                     #print("[INFO] elasped time: {:.2f}".format(fps.elapsed()))
                     #print("[INFO] approx. FPS: {:.2f}".format(fps.fps()))
                     print(subtitle_index)
-                    print(line_start_time + " --> " + line_end_time)
+                    print(line_start_time + ' --> ' + line_end_time)
                     print(prev_line)
                     print()
                     subtitle_index += 1
@@ -81,7 +100,7 @@ def convert_frames_to_srt(video):
         prev_frame_hash = frame_hash
 
         keyboard.wait_key()
-        #fps.update()
+        # fps.update()
         if keyboard.last_pressed_key == ord('q'):
             return
         elif keyboard.last_pressed_key == ord('p'):
@@ -133,12 +152,12 @@ def to_monochrome_subtitle_frame(cropped_frame):
 
 def clean_up_tesseract_output(text):
     # clean up common mistakes made by tesseract
-    text = text.replace("-", "一")
-    text = text.replace("+", "十")
-    text = text.replace("F", "上")
-    text = text.replace("，", "")
-    text = text.replace("。", "")
-    text = text.replace("”", "")
+    text = text.replace('-', '一')
+    text = text.replace('+', '十')
+    text = text.replace('F', '上')
+    text = text.replace('，', '')
+    text = text.replace('。', '')
+    text = text.replace('”', '')
     text = text.strip()
     return text
 
