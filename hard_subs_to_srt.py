@@ -13,14 +13,15 @@ NO_SUBTILE_FRAME_HASH = imagehash.hex_to_hash('0' * 256)
 
 def extract_srt(video_file, srt_file):
     video = FileVideoStream(video_file)
-    video.stream.set(cv2.CAP_PROP_POS_FRAMES, 2500)
+    first_frame_pos = 2500
+    video.stream.set(cv2.CAP_PROP_POS_FRAMES, first_frame_pos)
 
     if video.stream.isOpened() == False:
         print('Error opening video stream or file')
         return
 
     sys.stdout = FileAndTerminalStream(srt_file)
-    convert_frames_to_srt(video)
+    convert_frames_to_srt(video, first_frame_pos)
     sys.stdout = sys.stdout.terminal
 
     cv2.destroyAllWindows()
@@ -41,11 +42,12 @@ class FileAndTerminalStream(object):
         pass
 
 
-def convert_frames_to_srt(video):
+def convert_frames_to_srt(video, first_frame_pos):
     prev_frame_hash = NO_SUBTILE_FRAME_HASH
     subtitle_index = 1
     prev_line = ""
     prev_change_millis = 0  # either the start or the end of a subtitle line
+    frame_number = first_frame_pos
 
     keyboard = Keyboard()
 
@@ -85,7 +87,7 @@ def convert_frames_to_srt(video):
                     line_start_time = millis_to_srt_timestamp(
                         prev_change_millis)
                     line_end_time = millis_to_srt_timestamp(
-                        video.stream.get(cv2.CAP_PROP_POS_MSEC))
+                        get_millis_for_frame(video, frame_number))
                     # fps.stop()
                     #print("[INFO] elasped time: {:.2f}".format(fps.elapsed()))
                     #print("[INFO] approx. FPS: {:.2f}".format(fps.fps()))
@@ -95,9 +97,10 @@ def convert_frames_to_srt(video):
                     print()
                     subtitle_index += 1
                 prev_line = line
-                prev_change_millis = video.stream.get(cv2.CAP_PROP_POS_MSEC)
+                prev_change_millis = get_millis_for_frame(video, frame_number)
 
         prev_frame_hash = frame_hash
+        frame_number += 1
 
         keyboard.wait_key()
         # fps.update()
@@ -168,3 +171,7 @@ def millis_to_srt_timestamp(total_millis):
     (hours, minutes) = divmod(total_minutes, 60)
     time_format = '{:02}:{:02}:{:02},{:03}'
     return time_format.format(int(hours), int(minutes), int(seconds), int(millis))
+
+
+def get_millis_for_frame(video, frame_number):
+    return 1000.0 * frame_number / video.stream.get(cv2.CAP_PROP_FPS)
