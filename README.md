@@ -4,6 +4,7 @@ Creates an
 a video file that has hardcoded subtitles. For example,
 
 ![Example subtitle](example.png)
+
 will generate
 
 ```

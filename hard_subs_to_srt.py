@@ -9,7 +9,7 @@ def extract_srt(video_file):
     cap = cv2.VideoCapture(video_file)
     cap.set(cv2.CAP_PROP_POS_FRAMES, 5000)
 
-    if (cap.isOpened() == False):
+    if cap.isOpened() == False:
         print("Error opening video stream or file")
 
     convert_frames_to_srt(cap)
@@ -26,12 +26,16 @@ def convert_frames_to_srt(cap):
 
     keyboard = Keyboard()
 
-    while(cap.isOpened()):
+    width = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
+    height = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
+    preview_size = limit_size((width, height), (1280, 720))
+
+    while cap.isOpened():
         ret, frame = cap.read()
         if ret:
             cropped_frame = frame[1600:2160, 820:3020]
             monochrome_frame = to_monochrome_subtitle_frame(cropped_frame)
-            cv2.imshow('Orignal cropped', cropped_frame)
+            cv2.imshow('Orignal', cv2.resize(frame, preview_size))
             cv2.imshow('Processed image for tesseract', monochrome_frame)
 
             textImage = Image.fromarray(monochrome_frame)
@@ -81,6 +85,19 @@ class Keyboard:
     def wait_key(self):
         self.last_pressed_key = cv2.waitKey(1)
         return self.last_pressed_key
+
+
+def limit_size(size, max_dimensions):
+    (width, height) = size
+    (max_width, max_height) = max_dimensions
+
+    if width <= max_width and height <= max_height:
+        return size
+
+    if width / height > max_width / max_height:
+        return (max_width, int(height * max_width / width))
+    else:
+        return (int(width * max_height / height), max_height)
 
 
 def to_monochrome_subtitle_frame(cropped_frame):
