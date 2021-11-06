@@ -3,47 +3,57 @@ import pytesseract
 import imagehash
 import cv2
 import numpy
+#from imutils.video import FPS
+from imutils.video import FileVideoStream
 
+NO_SUBTILE_FRAME_HASH = imagehash.hex_to_hash('0' * 256)
 
 def extract_srt(video_file):
-    cap = cv2.VideoCapture(video_file)
-    cap.set(cv2.CAP_PROP_POS_FRAMES, 5000)
+    video = FileVideoStream(video_file)
+    video.stream.set(cv2.CAP_PROP_POS_FRAMES, 5000)
 
-    if cap.isOpened() == False:
+    if video.stream.isOpened() == False:
         print("Error opening video stream or file")
+        return
 
-    convert_frames_to_srt(cap)
+    convert_frames_to_srt(video)
 
-    cap.release()
     cv2.destroyAllWindows()
+    video.stop()
 
 
-def convert_frames_to_srt(cap):
-    prev_frame_hash = imagehash.hex_to_hash('0' * 256)
+def convert_frames_to_srt(video):
+    prev_frame_hash = NO_SUBTILE_FRAME_HASH
     subtitle_index = 1
     prev_line = ""
     prev_change_millis = 0  # either the start or the end of a subtitle line
 
     keyboard = Keyboard()
 
-    width = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
-    height = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
+    width = video.stream.get(cv2.CAP_PROP_FRAME_WIDTH)
+    height = video.stream.get(cv2.CAP_PROP_FRAME_HEIGHT)
     preview_size = limit_size((width, height), (1280, 720))
 
-    while cap.isOpened():
-        ret, frame = cap.read()
-        if ret:
-            cropped_frame = frame[1600:2160, 820:3020]
-            monochrome_frame = to_monochrome_subtitle_frame(cropped_frame)
-            cv2.imshow('Orignal', cv2.resize(frame, preview_size))
-            cv2.imshow('Processed image for tesseract', monochrome_frame)
+    video.start()
+    #fps = FPS().start()
+    while video.more():
+        frame = video.read()
+        cropped_frame = frame[1600:2160, 820:3020]
+        monochrome_frame = to_monochrome_subtitle_frame(cropped_frame)
+        cv2.imshow('Orignal', cv2.resize(frame, preview_size))
+        cv2.imshow('Processed image for tesseract', monochrome_frame)
 
-            textImage = Image.fromarray(monochrome_frame)
-            frame_hash = imagehash.average_hash(textImage, 32)
-            # only use tesseract if the subtitle changes. This is for
-            # performance and also to avoid having single frames of tesseract
-            # mistakes that get entered into the srt file.
-            if abs(prev_frame_hash - frame_hash) > 20:
+        textImage = Image.fromarray(monochrome_frame)
+        frame_hash = imagehash.average_hash(textImage, 32)
+        # only use tesseract if the subtitle changes. This is for
+        # performance and also to avoid having single frames of tesseract
+        # mistakes that get entered into the srt file.
+        if abs(prev_frame_hash - frame_hash) > 20:
+            if frame_hash == NO_SUBTILE_FRAME_HASH:
+                # no need to use tesseract when the input is just a white
+                # rectangle
+                line = ""
+            else:
                 # Page segmentation mode (PSM) 13 means "Raw line. Treat the
                 # image as a single text line, bypassing hacks that are
                 # Tesseract-specific."
@@ -51,32 +61,33 @@ def convert_frames_to_srt(cap):
                     monochrome_frame, lang='chi_sim', config='--psm 13')
                 line = clean_up_tesseract_output(line)
 
-                if prev_line != line:
-                    if prev_line != "":
-                        line_start_time = millis_to_srt_timestamp(
-                            prev_change_millis)
-                        line_end_time = millis_to_srt_timestamp(
-                            cap.get(cv2.CAP_PROP_POS_MSEC))
-                        print(subtitle_index)
-                        print(line_start_time + " --> " + line_end_time)
-                        print(prev_line)
-                        print()
-                        subtitle_index += 1
-                    prev_line = line
-                    prev_change_millis = cap.get(cv2.CAP_PROP_POS_MSEC)
+            if prev_line != line:
+                if prev_line != "":
+                    line_start_time = millis_to_srt_timestamp(
+                        prev_change_millis)
+                    line_end_time = millis_to_srt_timestamp(
+                        video.stream.get(cv2.CAP_PROP_POS_MSEC))
+                    #fps.stop()
+                    #print("[INFO] elasped time: {:.2f}".format(fps.elapsed()))
+                    #print("[INFO] approx. FPS: {:.2f}".format(fps.fps()))
+                    print(subtitle_index)
+                    print(line_start_time + " --> " + line_end_time)
+                    print(prev_line)
+                    print()
+                    subtitle_index += 1
+                prev_line = line
+                prev_change_millis = video.stream.get(cv2.CAP_PROP_POS_MSEC)
 
-            prev_frame_hash = frame_hash
+        prev_frame_hash = frame_hash
 
-            keyboard.wait_key()
-            if keyboard.last_pressed_key == ord('q'):
-                return
-            elif keyboard.last_pressed_key == ord('p'):
-                while keyboard.wait_key() != ord('c'):
-                    if (keyboard.last_pressed_key == ord('q')):
-                        return
-
-        else:
+        keyboard.wait_key()
+        #fps.update()
+        if keyboard.last_pressed_key == ord('q'):
             return
+        elif keyboard.last_pressed_key == ord('p'):
+            while keyboard.wait_key() != ord('c'):
+                if (keyboard.last_pressed_key == ord('q')):
+                    return
 
 
 class Keyboard:
