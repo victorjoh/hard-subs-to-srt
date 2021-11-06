@@ -104,6 +104,7 @@ def to_monochrome_subtitle_frame(cropped_frame):
 
 
 def clean_up_tesseract_output(text):
+    # clean up common mistakes made by tesseract
     text = text.replace("-", "一")
     text = text.replace("+", "十")
     text = text.replace("F", "上")
