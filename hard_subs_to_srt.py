@@ -12,87 +12,111 @@ def extract_srt(video_file):
     if (cap.isOpened() == False):
         print("Error opening video stream or file")
 
-    prev_hash = imagehash.hex_to_hash('0' * 256)
+    convert_frames_to_srt(cap)
+
+    cap.release()
+    cv2.destroyAllWindows()
+
+
+def convert_frames_to_srt(cap):
+    prev_frame_hash = imagehash.hex_to_hash('0' * 256)
     subtitle_index = 1
-    prev_subtitle = ""
+    prev_line = ""
     prev_change_millis = 0  # either the start or the end of a subtitle line
+
+    keyboard = Keyboard()
 
     while(cap.isOpened()):
         ret, frame = cap.read()
         if ret:
-            cropped = frame[1600:2160, 820:3020]
-            img = cv2.cvtColor(cropped, cv2.COLOR_BGR2GRAY)
-            img = cv2.threshold(img, 250, 255, cv2.THRESH_BINARY)[1]
-            above_subtitles = numpy.array(
-                [[0, 0], [0, 46], [2200, 46], [2200, 0]])
-            below_subtitles = numpy.array(
-                [[0, 200], [0, 255], [2200, 255], [2200, 200]])
-            # ensure white above and below text. Some blank space is needed for
-            # tesseract
-            img = cv2.fillPoly(
-                img, pts=[above_subtitles, below_subtitles], color=0)
-            img = cv2.bitwise_not(img)
-            img = cv2.GaussianBlur(img, (21, 21), 0)
-            img = cv2.threshold(img, 200, 255, cv2.THRESH_BINARY)[1]
-            cv2.imshow('Orignal cropped', cropped)
-            cv2.imshow('Processed image for tesseract', img)
+            cropped_frame = frame[1600:2160, 820:3020]
+            monochrome_frame = to_monochrome_subtitle_frame(cropped_frame)
+            cv2.imshow('Orignal cropped', cropped_frame)
+            cv2.imshow('Processed image for tesseract', monochrome_frame)
 
-            textImage = Image.fromarray(img)
-            hash = imagehash.average_hash(textImage, 32)
+            textImage = Image.fromarray(monochrome_frame)
+            frame_hash = imagehash.average_hash(textImage, 32)
             # only use tesseract if the subtitle changes. This is for
             # performance and also to avoid having single frames of tesseract
             # mistakes that get entered into the srt file.
-            if abs(prev_hash - hash) > 20:
+            if abs(prev_frame_hash - frame_hash) > 20:
                 # Page segmentation mode (PSM) 13 means "Raw line. Treat the
                 # image as a single text line, bypassing hacks that are
                 # Tesseract-specific."
-                text = pytesseract.image_to_string(
-                    img, lang='chi_sim', config='--psm 13')
-                text = text.replace("-", "一")
-                text = text.replace("+", "十")
-                text = text.replace("F", "上")
-                text = text.replace("，", "")
-                text = text.replace("。", "")
-                text = text.replace("”", "")
-                text = text.strip()
+                line = pytesseract.image_to_string(
+                    monochrome_frame, lang='chi_sim', config='--psm 13')
+                line = clean_up_tesseract_output(line)
 
-                if prev_subtitle != text:
-                    if prev_subtitle != "":
+                if prev_line != line:
+                    if prev_line != "":
                         line_start_time = millis_to_srt_timestamp(
                             prev_change_millis)
                         line_end_time = millis_to_srt_timestamp(
                             cap.get(cv2.CAP_PROP_POS_MSEC))
                         print(subtitle_index)
                         print(line_start_time + " --> " + line_end_time)
-                        print(prev_subtitle)
+                        print(prev_line)
                         print()
                         subtitle_index += 1
-                    prev_subtitle = text
+                    prev_line = line
                     prev_change_millis = cap.get(cv2.CAP_PROP_POS_MSEC)
 
-            prev_hash = hash
+            prev_frame_hash = frame_hash
 
-            # Press Q on keyboard to  exit
-            if cv2.waitKey(25) & 0xFF == ord('q'):
-                break
-            if cv2.waitKey(25) & 0xFF == ord('p'):
-                while(True):
-                    if cv2.waitKey(25) & 0xFF == ord('c'):
-                        break
+            keyboard.wait_key()
+            if keyboard.last_pressed_key == ord('q'):
+                return
+            elif keyboard.last_pressed_key == ord('p'):
+                while keyboard.wait_key() != ord('c'):
+                    if (keyboard.last_pressed_key == ord('q')):
+                        return
 
-        # Break the loop
         else:
-            break
+            return
 
-    # When everything done, release the video capture object
-    cap.release()
 
-    # Closes all the frames
-    cv2.destroyAllWindows()
+class Keyboard:
+    last_pressed_key = 0
+
+    def wait_key(self):
+        self.last_pressed_key = cv2.waitKey(1)
+        return self.last_pressed_key
+
+
+def to_monochrome_subtitle_frame(cropped_frame):
+    # see https://tesseract-ocr.github.io/tessdoc/ImproveQuality.html for more
+    # information
+    img = cv2.cvtColor(cropped_frame, cv2.COLOR_BGR2GRAY)
+    # make the image monochrome where only the whitest pixel are kept white
+    img = cv2.threshold(img, 250, 255, cv2.THRESH_BINARY)[1]
+    above_subtitles = numpy.array([[0, 0], [0, 46], [2200, 46], [2200, 0]])
+    below_subtitles = numpy.array(
+        [[0, 200], [0, 255], [2200, 255], [2200, 200]])
+    # ensure white above and below text. Some blank space is needed for tesseract
+    img = cv2.fillPoly(img, pts=[above_subtitles, below_subtitles], color=0)
+    img = cv2.bitwise_not(img)
+    # Add some blur since some pixels within the subtitles are not completely
+    # white. This also eliminates smaller groups of white pixels outside of the
+    # subtitles
+    img = cv2.GaussianBlur(img, (21, 21), 0)
+    img = cv2.threshold(img, 200, 255, cv2.THRESH_BINARY)[1]
+    return img
+
+
+def clean_up_tesseract_output(text):
+    text = text.replace("-", "一")
+    text = text.replace("+", "十")
+    text = text.replace("F", "上")
+    text = text.replace("，", "")
+    text = text.replace("。", "")
+    text = text.replace("”", "")
+    text = text.strip()
+    return text
 
 
 def millis_to_srt_timestamp(total_millis):
     (total_seconds, millis) = divmod(total_millis, 1000)
     (total_minutes, seconds) = divmod(total_seconds, 60)
     (hours, minutes) = divmod(total_minutes, 60)
-    return '{:02}:{:02}:{:02},{:03}'.format(int(hours), int(minutes), int(seconds), int(millis))
+    time_format = '{:02}:{:02}:{:02},{:03}'
+    return time_format.format(int(hours), int(minutes), int(seconds), int(millis))
