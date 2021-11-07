@@ -1,12 +1,13 @@
+from os import times
 from PIL import Image
 import pytesseract
 import imagehash
 import cv2
 import numpy
 import sys
-#from imutils.video import FPS
 from imutils.video import FileVideoStream
-import os
+from queue import Queue
+from threading import Thread
 
 NO_SUBTILE_FRAME_HASH = imagehash.hex_to_hash('0' * 256)
 
@@ -44,10 +45,8 @@ class FileAndTerminalStream(object):
 
 def convert_frames_to_srt(video, first_frame_pos):
     prev_frame_hash = NO_SUBTILE_FRAME_HASH
-    subtitle_index = 1
-    prev_line = ""
-    prev_change_millis = 0  # either the start or the end of a subtitle line
     frame_number = first_frame_pos
+    reader = SubtitleReader()
 
     keyboard = Keyboard()
 
@@ -56,7 +55,8 @@ def convert_frames_to_srt(video, first_frame_pos):
     preview_size = limit_size((width, height), (1280, 720))
 
     video.start()
-    #fps = FPS().start()
+    reader.start()
+
     while video.more():
         frame = video.read()
         cropped_frame = frame[1600:2160, 820:3020]
@@ -66,38 +66,17 @@ def convert_frames_to_srt(video, first_frame_pos):
 
         textImage = Image.fromarray(monochrome_frame)
         frame_hash = imagehash.average_hash(textImage, 32)
-        # only use tesseract if the subtitle changes. This is for
-        # performance and also to avoid having single frames of tesseract
-        # mistakes that get entered into the srt file.
+        # only use tesseract if the subtitle changes. This is for  performance
+        # and also to avoid having single frames of tesseract mistakes that get
+        # entered into the srt file.
         if abs(prev_frame_hash - frame_hash) > 20:
+            timestamp = get_millis_for_frame(video, frame_number)
             if frame_hash == NO_SUBTILE_FRAME_HASH:
-                # no need to use tesseract when the input is just a white
-                # rectangle
-                line = ""
+                # no need to use tesseract when the input is a white rectangle
+                change = EmptySubtitleChange(timestamp)
             else:
-                # Page segmentation mode (PSM) 13 means "Raw line. Treat the
-                # image as a single text line, bypassing hacks that are
-                # Tesseract-specific."
-                line = pytesseract.image_to_string(
-                    monochrome_frame, lang='chi_sim', config='--psm 13')
-                line = clean_up_tesseract_output(line)
-
-            if prev_line != line:
-                if prev_line != '':
-                    line_start_time = millis_to_srt_timestamp(
-                        prev_change_millis)
-                    line_end_time = millis_to_srt_timestamp(
-                        get_millis_for_frame(video, frame_number))
-                    # fps.stop()
-                    #print("[INFO] elasped time: {:.2f}".format(fps.elapsed()))
-                    #print("[INFO] approx. FPS: {:.2f}".format(fps.fps()))
-                    print(subtitle_index)
-                    print(line_start_time + ' --> ' + line_end_time)
-                    print(prev_line)
-                    print()
-                    subtitle_index += 1
-                prev_line = line
-                prev_change_millis = get_millis_for_frame(video, frame_number)
+                change = SubtitleChange(monochrome_frame, timestamp)
+            reader.provide_material(change)
 
         prev_frame_hash = frame_hash
         frame_number += 1
@@ -110,6 +89,69 @@ def convert_frames_to_srt(video, first_frame_pos):
             while keyboard.wait_key() != ord('c'):
                 if (keyboard.last_pressed_key == ord('q')):
                     return
+
+
+class SubtitleReader:
+    def __init__(self):
+        self.changes = Queue(maxsize=128)
+        self.thread = Thread(target=self.update, args=())
+        self.thread.daemon = True
+
+    def start(self):
+        self.thread.start()
+
+    def update(self):
+        subtitle_index = 1
+        prev_line = ""
+        prev_change_millis = 0  # either the start or the end of a subtitle line
+
+        while True:
+            change = self.changes.get()
+            line = change.read_subtitle()
+
+            if prev_line != line:
+                if prev_line != '':
+                    print_line(
+                        index=subtitle_index,
+                        start_time=prev_change_millis,
+                        end_time=change.timestamp,
+                        text=prev_line)
+                    subtitle_index += 1
+                prev_line = line
+                prev_change_millis = change.timestamp
+
+    def provide_material(self, subtitle_change):
+        self.changes.put(subtitle_change)
+
+
+def print_line(index, start_time, end_time, text):
+    line_start_time = millis_to_srt_timestamp(start_time)
+    line_end_time = millis_to_srt_timestamp(end_time)
+    print(index)
+    print(line_start_time + ' --> ' + line_end_time)
+    print(text)
+    print()
+
+
+class SubtitleChange:
+    def __init__(self, frame, timestamp):
+        self.frame = frame
+        self.timestamp = timestamp
+
+    def read_subtitle(self):
+        # Page segmentation mode (PSM) 13 means "Raw line. Treat the image as a
+        # single text line, bypassing hacks that are Tesseract-specific."
+        line = pytesseract.image_to_string(
+            self.frame, lang='chi_sim', config='--psm 13')
+        return clean_up_tesseract_output(line)
+
+
+class EmptySubtitleChange:
+    def __init__(self, timestamp):
+        self.timestamp = timestamp
+
+    def read_subtitle(self):
+        return ''
 
 
 class Keyboard:
