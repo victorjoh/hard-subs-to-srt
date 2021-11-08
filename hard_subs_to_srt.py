@@ -8,8 +8,20 @@ import sys
 from imutils.video import FileVideoStream
 from queue import Queue
 from threading import Thread
+import argparse
 
 NO_SUBTILE_FRAME_HASH = imagehash.hex_to_hash('0' * 256)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='Creates an SRT file from a video file that has hardcoded subtitles')
+    parser.add_argument(
+        'video_file', help='the path to a video file that has hardcoded subtitles')
+    parser.add_argument(
+        'srt_file', help='where to put the resulting SRT file, will overwrite if it is already there')
+    args = parser.parse_args()
+    extract_srt(args.video_file, args.srt_file)
 
 
 def extract_srt(video_file, srt_file):
@@ -217,3 +229,7 @@ def millis_to_srt_timestamp(total_millis):
 
 def get_millis_for_frame(video, frame_number):
     return 1000.0 * frame_number / video.stream.get(cv2.CAP_PROP_FPS)
+
+
+if __name__ == "__main__":
+    main()
