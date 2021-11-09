@@ -17,7 +17,7 @@ The script relies on [Tesseract](https://github.com/tesseract-ocr/tesseract) for
 the optical character recognition.
 
 ## Dependencies
-* [Python 3](https://www.python.org/downloads/)
+* [Python 3.9](https://www.python.org/downloads/)
 * [Tesseract
   OCR](https://github.com/tesseract-ocr/tesseract#installing-tesseract)
   with support for your target language
@@ -31,7 +31,7 @@ pipenv install
 ## How to use
 To extract hardcoded subtitles from a video file run:
 ```
-python hard_subs_to_srt.py "path/to/video_file.mkv" "path/to/subtitles.srt"
+pipenv run python hard_subs_to_srt.py "path/to/video_file.mkv" "path/to/subtitles.srt"
 ```
 
 This opens a GUI where you can see the script working on the video. Commands
@@ -43,7 +43,7 @@ that are available when running the video are:
 For more information, have a look at the help documentation of the script by
 running:
 ```
-python hard_subs_to_srt.py -h
+pipenv run python hard_subs_to_srt.py -h
 ```
 
 Note that the script is currently locked for specific format of video input. To
