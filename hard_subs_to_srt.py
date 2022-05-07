@@ -121,8 +121,9 @@ def convert_frames_to_srt(video, first_frame_pos):
     video.start()
     reader.start()
 
-    while video.more():
-        frame = video.read()
+    frame = video.read()
+
+    while frame is not None:
         cropped_frame = frame[SUBTITLE_BOUNDS_TOP:SUBTITLE_BOUNDS_BOTTOM,
                               SUBTITLE_BOUNDS_LEFT:SUBTITLE_BOUNDS_RIGHT]
         monochrome_frame = to_monochrome_subtitle_frame(cropped_frame)
@@ -155,6 +156,8 @@ def convert_frames_to_srt(video, first_frame_pos):
             while keyboard.wait_key() != ord('c'):
                 if (keyboard.last_pressed_key == ord('q')):
                     return
+
+        frame = video.read()
 
 
 class SubtitleReader:
