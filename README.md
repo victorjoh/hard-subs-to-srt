@@ -47,4 +47,6 @@ pipenv run python hard_subs_to_srt.py -h
 ```
 
 Note that the script is currently locked for specific format of video input. To
-get it working for your video you need to edit the script.
+get it working for your video you need to edit the script. So far I have only
+tried the script on 4k Chinese video. For lower resolution, the subtitle images
+may have to be scaled up before feeding them to Tesseract.

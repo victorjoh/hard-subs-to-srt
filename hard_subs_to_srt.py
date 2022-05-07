@@ -10,7 +10,60 @@ from queue import Queue
 from threading import Thread
 import argparse
 
+FIRST_FRAME = 2500 # Skip frames up to this point
+PREVIEW_MAX_SIZE = (1280, 720)
+
+# The subtitles are within these bounds. The bounds are not super tight since
+# Tesseract works better with some blank space around the text.
+SUBTITLE_BOUNDS_LEFT = 820
+SUBTITLE_BOUNDS_RIGHT = 3020
+SUBTITLE_BOUNDS_TOP = 1600
+SUBTITLE_BOUNDS_BOTTOM = 1863
+# We force some space above and below the subtitles to be white before feeding
+# the text images to Tesseract.
+SUBTITLE_BLANK_SPACE_ABOVE = 46
+SUBTITLE_BLANK_SPACE_BELOW = 63
+
+# Hardcoded subtitles are not entirely white. To filter out subtitles we look
+# for pixels that are as bright or brighter than this. Completely white is 255
+SUBTITLES_MIN_VALUE = 250
+# We add some blur to the subtitle images before feeding them to Tesseract since
+# some pixels within the subtitles are not white enough. This also eliminates
+# smaller groups of white pixels outside of the subtitles. A bigger value means
+# more blur.
+SUBTITLE_IMAGE_BLUR_SIZE = (21, 21)
+# After blurring the image we make the image monochrome since that works better
+# for Tesseract. This is the limit for what should be considered a (white)
+# subtitle pixel after the blur.
+SUBTITLES_MIN_VALUE_AFTER_BLUR = 55
+
+# Only use Tesseract if the subtitle changes. This is for performance and also
+# to avoid having single frames of Tesseract mistakes that get entered into the
+# SRT file. To tell if two images are of the same subtitle we compare the image
+# hashes of them. See https://pypi.org/project/ImageHash/ for more information.
+IMAGE_HASH_SIZE = 32
+MAX_HASH_DIFFERENCE_FOR_SAME_SUBTITLE = 20
 NO_SUBTILE_FRAME_HASH = imagehash.hex_to_hash('0' * 256)
+
+TESSERACT_EXPECTED_LANGUAGE = 'chi_sim'
+# Page segmentation mode (PSM) 13 means "Raw line. Treat the image as a single
+# text line, bypassing hacks that are Tesseract-specific." See this link for
+# other options:
+# https://tesseract-ocr.github.io/tessdoc/ImproveQuality.html#page-segmentation-method
+TESSERACT_CONFIG = '--psm 13'
+
+# Tesseract makes mistakes. Some are easy to fix. Keys in this dictionary will
+# be replaced with their respective values.
+COMMON_MISTAKES = {
+    '-': '一',
+    '+': '十',
+    'F': '上',
+    '，': '',
+    '。': '',
+    '”': '',
+}
+
+OUTPUT_ENCODING = 'utf-8'
 
 
 def main():
@@ -26,15 +79,14 @@ def main():
 
 def extract_srt(video_file, srt_file):
     video = FileVideoStream(video_file)
-    first_frame_pos = 2500
-    video.stream.set(cv2.CAP_PROP_POS_FRAMES, first_frame_pos)
+    video.stream.set(cv2.CAP_PROP_POS_FRAMES, FIRST_FRAME)
 
     if video.stream.isOpened() == False:
         print('Error opening video stream or file')
         return
 
     sys.stdout = FileAndTerminalStream(srt_file)
-    convert_frames_to_srt(video, first_frame_pos)
+    convert_frames_to_srt(video, FIRST_FRAME)
     sys.stdout = sys.stdout.terminal
 
     cv2.destroyAllWindows()
@@ -44,7 +96,7 @@ def extract_srt(video_file, srt_file):
 class FileAndTerminalStream(object):
     def __init__(self, file):
         self.terminal = sys.stdout
-        self.srt = open(file, 'w', encoding='utf-8')
+        self.srt = open(file, 'w', encoding=OUTPUT_ENCODING)
 
     def write(self, message):
         self.terminal.write(message)
@@ -64,27 +116,29 @@ def convert_frames_to_srt(video, first_frame_pos):
 
     width = video.stream.get(cv2.CAP_PROP_FRAME_WIDTH)
     height = video.stream.get(cv2.CAP_PROP_FRAME_HEIGHT)
-    preview_size = limit_size((width, height), (1280, 720))
+    preview_size = limit_size((width, height), PREVIEW_MAX_SIZE)
 
     video.start()
     reader.start()
 
     while video.more():
         frame = video.read()
-        cropped_frame = frame[1600:2160, 820:3020]
+        cropped_frame = frame[SUBTITLE_BOUNDS_TOP:SUBTITLE_BOUNDS_BOTTOM,
+                              SUBTITLE_BOUNDS_LEFT:SUBTITLE_BOUNDS_RIGHT]
         monochrome_frame = to_monochrome_subtitle_frame(cropped_frame)
         cv2.imshow('Orignal', cv2.resize(frame, preview_size))
         cv2.imshow('Processed image for tesseract', monochrome_frame)
 
         textImage = Image.fromarray(monochrome_frame)
-        frame_hash = imagehash.average_hash(textImage, 32)
-        # only use tesseract if the subtitle changes. This is for  performance
-        # and also to avoid having single frames of tesseract mistakes that get
-        # entered into the srt file.
-        if abs(prev_frame_hash - frame_hash) > 20:
+        frame_hash = imagehash.average_hash(textImage, IMAGE_HASH_SIZE)
+        # Only use Tesseract if the subtitle changes. This is for performance
+        # and also to avoid having single frames of Tesseract mistakes that get
+        # entered into the SRT file.
+        hash_difference = abs(prev_frame_hash - frame_hash)
+        if hash_difference > MAX_HASH_DIFFERENCE_FOR_SAME_SUBTITLE:
             timestamp = get_millis_for_frame(video, frame_number)
             if frame_hash == NO_SUBTILE_FRAME_HASH:
-                # no need to use tesseract when the input is a white rectangle
+                # no need to use Tesseract when the input is a white rectangle
                 change = EmptySubtitleChange(timestamp)
             else:
                 change = SubtitleChange(monochrome_frame, timestamp)
@@ -115,7 +169,7 @@ class SubtitleReader:
     def update(self):
         subtitle_index = 1
         prev_line = ""
-        prev_change_millis = 0  # either the start or the end of a subtitle line
+        prev_change_millis = 0 # either the start or the end of a subtitle line
 
         while True:
             change = self.changes.get()
@@ -151,10 +205,8 @@ class SubtitleChange:
         self.timestamp = timestamp
 
     def read_subtitle(self):
-        # Page segmentation mode (PSM) 13 means "Raw line. Treat the image as a
-        # single text line, bypassing hacks that are Tesseract-specific."
-        line = pytesseract.image_to_string(
-            self.frame, lang='chi_sim', config='--psm 13')
+        line = pytesseract.image_to_string(self.frame,
+            lang=TESSERACT_EXPECTED_LANGUAGE, config=TESSERACT_CONFIG)
         return clean_up_tesseract_output(line)
 
 
@@ -192,29 +244,34 @@ def to_monochrome_subtitle_frame(cropped_frame):
     # information
     img = cv2.cvtColor(cropped_frame, cv2.COLOR_BGR2GRAY)
     # make the image monochrome where only the whitest pixel are kept white
-    img = cv2.threshold(img, 250, 255, cv2.THRESH_BINARY)[1]
-    above_subtitles = numpy.array([[0, 0], [0, 46], [2200, 46], [2200, 0]])
-    below_subtitles = numpy.array(
-        [[0, 200], [0, 255], [2200, 255], [2200, 200]])
-    # ensure white above and below text. Some blank space is needed for tesseract
+    img = cv2.threshold(img, SUBTITLES_MIN_VALUE, 255, cv2.THRESH_BINARY)[1]
+
+    bounds_width = SUBTITLE_BOUNDS_RIGHT - SUBTITLE_BOUNDS_LEFT
+    bounds_height = SUBTITLE_BOUNDS_BOTTOM - SUBTITLE_BOUNDS_TOP
+    whitespace_below_y = bounds_height - SUBTITLE_BLANK_SPACE_BELOW
+    above_subtitles = numpy.array([[0, 0], [0, SUBTITLE_BLANK_SPACE_ABOVE],
+        [bounds_width, SUBTITLE_BLANK_SPACE_ABOVE], [bounds_width, 0]])
+    below_subtitles = numpy.array([[0, whitespace_below_y], [0, bounds_height],
+    [bounds_width, bounds_height], [bounds_width, whitespace_below_y]])
+    # ensure white above and below text. Some blank space is needed for
+    # Tesseract
     img = cv2.fillPoly(img, pts=[above_subtitles, below_subtitles], color=0)
-    img = cv2.bitwise_not(img)
+
     # Add some blur since some pixels within the subtitles are not completely
     # white. This also eliminates smaller groups of white pixels outside of the
     # subtitles
-    img = cv2.GaussianBlur(img, (21, 21), 0)
-    img = cv2.threshold(img, 200, 255, cv2.THRESH_BINARY)[1]
+    img = cv2.GaussianBlur(img, SUBTITLE_IMAGE_BLUR_SIZE, 0)
+    img = cv2.threshold(
+        img, SUBTITLES_MIN_VALUE_AFTER_BLUR, 255, cv2.THRESH_BINARY)[1]
+    
+    # Invert the colors to have white background with black text.
+    img = cv2.bitwise_not(img)
     return img
 
 
 def clean_up_tesseract_output(text):
-    # clean up common mistakes made by tesseract
-    text = text.replace('-', '一')
-    text = text.replace('+', '十')
-    text = text.replace('F', '上')
-    text = text.replace('，', '')
-    text = text.replace('。', '')
-    text = text.replace('”', '')
+    for key, value in COMMON_MISTAKES.items():
+        text = text.replace(key, value)
     text = text.strip()
     return text
 
